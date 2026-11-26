@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1160 300" width="1160" height="300">
+  <defs>
+    <linearGradient id="v6" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7C83FF"/>
+      <stop offset="1" stop-color="#4F46E5"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(20 20) scale(0.5078125)">
+  <defs>
+    <linearGradient id="wbg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8B93FF"/>
+      <stop offset="0.5" stop-color="#5B5BF0"/>
+      <stop offset="1" stop-color="#3A2FC2"/>
+    </linearGradient>
+    <radialGradient id="wsh" cx="0.25" cy="0.15" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="wco" cx="0.4" cy="0.35" r="0.7">
+      <stop offset="0" stop-color="#6EF0C0"/>
+      <stop offset="1" stop-color="#10B981"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="118" fill="url(#wbg)"/>
+  <rect width="512" height="512" rx="118" fill="url(#wsh)"/>
+  <g stroke="#FFFFFF" stroke-linecap="round" stroke-opacity="0.5" stroke-width="14">
+    <line x1="256" y1="256" x2="256" y2="112"/>
+    <line x1="256" y1="256" x2="380.7" y2="184"/>
+    <line x1="256" y1="256" x2="380.7" y2="328"/>
+    <line x1="256" y1="256" x2="256" y2="400"/>
+    <line x1="256" y1="256" x2="131.3" y2="328"/>
+    <line x1="256" y1="256" x2="131.3" y2="184"/>
+  </g>
+  <polygon points="256,112 380.7,184 380.7,328 256,400 131.3,328 131.3,184" fill="#FFFFFF" fill-opacity="0.08" stroke="#FFFFFF" stroke-width="22" stroke-linejoin="round"/>
+  <g fill="#FFFFFF">
+    <circle cx="256" cy="112" r="27"/>
+    <circle cx="380.7" cy="184" r="27"/>
+    <circle cx="380.7" cy="328" r="27"/>
+    <circle cx="256" cy="400" r="27"/>
+    <circle cx="131.3" cy="328" r="27"/>
+    <circle cx="131.3" cy="184" r="27"/>
+  </g>
+  <g fill="#4F46E5">
+    <circle cx="256" cy="112" r="10"/>
+    <circle cx="380.7" cy="184" r="10"/>
+    <circle cx="380.7" cy="328" r="10"/>
+    <circle cx="256" cy="400" r="10"/>
+    <circle cx="131.3" cy="328" r="10"/>
+    <circle cx="131.3" cy="184" r="10"/>
+  </g>
+  <circle cx="256" cy="256" r="70" fill="#34D399" fill-opacity="0.22"/>
+  <circle cx="256" cy="256" r="46" fill="url(#wco)" stroke="#FFFFFF" stroke-width="10"/>
+</g>
+  <g font-family="Segoe UI, Inter, Helvetica Neue, Arial, sans-serif">
+    <text x="320" y="152" font-size="116" font-weight="800" letter-spacing="-3" fill="#1C2234">Proxy<tspan fill="url(#v6)">V6</tspan></text>
+    <rect x="324" y="186" width="118" height="52" rx="26" fill="#10B981"/>
+    <text x="383" y="222" font-size="30" font-weight="800" letter-spacing="3" fill="#FFFFFF" text-anchor="middle">MMO</text>
+    <text x="462" y="223" font-size="32" font-weight="500" fill="#69738C">Một prefix IPv6, hàng nghìn proxy</text>
+  </g>
+</svg>
