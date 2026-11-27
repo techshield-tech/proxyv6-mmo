@@ -1,23 +1,23 @@
 mod addresses;
 mod generate;
-mod logs;
 mod settings;
 mod sidebar;
 
+use eframe::egui::text::{LayoutJob, TextFormat};
 use eframe::egui::{
-    self, Align, Align2, Button, Color32, CornerRadius, Frame, Layout, Margin, Response, RichText, Sense, Stroke,
-    StrokeKind, Vec2,
+    self, Align, Align2, Button, Color32, CornerRadius, FontId, Frame, Layout, Margin, Response, RichText, Sense,
+    Stroke, StrokeKind, Vec2,
 };
 
 use crate::app::{App, Confirm, Tab, ToastLevel};
 use crate::net::platform;
-use crate::theme::Palette;
+use crate::theme::{self, Palette};
 
 pub fn card_pad<R>(ui: &mut egui::Ui, p: &Palette, pad: i8, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
     Frame::new()
         .fill(p.card)
         .stroke(Stroke::new(1.0, p.border))
-        .corner_radius(CornerRadius::same(12))
+        .corner_radius(CornerRadius::same(6))
         .inner_margin(Margin::same(pad))
         .show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -32,11 +32,11 @@ pub fn card<R>(ui: &mut egui::Ui, p: &Palette, add: impl FnOnce(&mut egui::Ui) -
 
 pub fn badge(ui: &mut egui::Ui, text: &str, color: Color32) {
     Frame::new()
-        .fill(color.gamma_multiply(0.16))
-        .corner_radius(CornerRadius::same(6))
+        .fill(color.gamma_multiply(0.14))
+        .corner_radius(CornerRadius::same(3))
         .inner_margin(Margin::symmetric(7, 2))
         .show(ui, |ui| {
-            ui.label(RichText::new(text).small().strong().color(color));
+            ui.label(RichText::new(text).font(theme::semibold(11.5)).color(color));
         });
 }
 
@@ -51,7 +51,7 @@ pub fn dot_label(ui: &mut egui::Ui, color: Color32, text: RichText) -> egui::Res
 }
 
 pub fn title(ui: &mut egui::Ui, p: &Palette, text: &str) {
-    ui.label(RichText::new(text).size(15.5).strong().color(p.text));
+    ui.label(RichText::new(text).font(theme::semibold(15.5)).color(p.text));
 }
 
 pub fn hint(ui: &mut egui::Ui, p: &Palette, text: &str) {
@@ -69,54 +69,106 @@ fn press_feedback(ui: &egui::Ui, resp: &Response, hover: Color32, press: Color32
     } else {
         return;
     };
-    ui.painter().rect_filled(resp.rect, CornerRadius::same(8), color);
+    ui.painter().rect_filled(resp.rect, CornerRadius::same(4), color);
 }
 
-fn filled_button(ui: &mut egui::Ui, fill: Color32, enabled: bool, text: &str) -> Response {
+fn filled_button(
+    ui: &mut egui::Ui,
+    fill: Color32,
+    text_color: Color32,
+    enabled: bool,
+    text: &str,
+    size: f32,
+    height: f32,
+) -> Response {
     let resp = ui.add_enabled(
         enabled,
-        Button::new(RichText::new(text.to_string()).strong().color(Color32::WHITE))
+        Button::new(RichText::new(text.to_string()).font(theme::semibold(size)).color(text_color))
             .fill(fill)
             .stroke(Stroke::NONE)
-            .min_size(Vec2::new(0.0, 32.0)),
+            .min_size(Vec2::new(0.0, height)),
     );
     press_feedback(ui, &resp, Color32::from_white_alpha(28), Color32::from_black_alpha(48));
     resp
 }
 
 pub fn primary(ui: &mut egui::Ui, p: &Palette, enabled: bool, text: &str) -> Response {
-    filled_button(ui, p.accent_fill, enabled, text)
+    filled_button(ui, p.accent_fill, p.on_accent, enabled, text, 14.0, 30.0)
 }
 
 pub fn danger(ui: &mut egui::Ui, p: &Palette, enabled: bool, text: &str) -> Response {
-    filled_button(ui, p.danger_fill, enabled, text)
+    filled_button(ui, p.danger_fill, Color32::WHITE, enabled, text, 14.0, 30.0)
+}
+
+pub fn danger_small(ui: &mut egui::Ui, p: &Palette, enabled: bool, text: &str) -> Response {
+    filled_button(ui, p.danger_fill, Color32::WHITE, enabled, text, 13.0, 22.0)
 }
 
 pub fn plain_button(text: &str) -> Button<'static> {
-    Button::new(text.to_string()).min_size(Vec2::new(0.0, 32.0))
+    Button::new(text.to_string()).min_size(Vec2::new(0.0, 30.0))
 }
 
-fn tab_button(ui: &mut egui::Ui, p: &Palette, text: String, selected: bool, alert: bool) -> Response {
-    let rich = if selected {
-        RichText::new(text).strong().color(Color32::WHITE)
-    } else if alert {
-        RichText::new(text).strong().color(p.error)
+fn tab_button(ui: &mut egui::Ui, p: &Palette, text: String, selected: bool) -> Response {
+    let font = if selected {
+        theme::semibold(14.0)
     } else {
-        RichText::new(text).color(p.weak)
+        FontId::proportional(14.0)
     };
-    let fill = if selected { p.accent_fill } else { Color32::TRANSPARENT };
-    let resp = ui.add(
-        Button::new(rich)
-            .min_size(Vec2::new(0.0, 30.0))
-            .stroke(Stroke::NONE)
-            .fill(fill),
-    );
-    if selected {
-        press_feedback(ui, &resp, Color32::from_white_alpha(28), Color32::from_black_alpha(48));
-    } else {
-        press_feedback(ui, &resp, p.accent.gamma_multiply(0.16), p.accent.gamma_multiply(0.3));
+    let galley = ui.painter().layout_no_wrap(text.clone(), font, Color32::PLACEHOLDER);
+    let size = Vec2::new(galley.size().x + 24.0, 30.0);
+    let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, ui.is_enabled(), text.clone()));
+    if ui.is_rect_visible(rect) {
+        let color = if selected || resp.hovered() {
+            p.text
+        } else {
+            p.weak
+        };
+        if resp.hovered() && !selected {
+            ui.painter().rect_filled(rect, CornerRadius::same(4), p.card_hover);
+        }
+        let pos = rect.center() - galley.size() / 2.0;
+        ui.painter().galley(pos, galley, color);
+        if selected {
+            let bar = egui::Rect::from_min_max(egui::pos2(rect.left(), rect.bottom() - 2.0), rect.right_bottom());
+            ui.painter().rect_filled(bar, CornerRadius::ZERO, p.accent_fill);
+        }
     }
     resp
+}
+
+pub fn addr_job(text: &str, split: usize, dim: Color32, bright: Color32, font: FontId) -> LayoutJob {
+    let mut job = LayoutJob::default();
+    let split = if split <= text.len() && text.is_char_boundary(split) { split } else { 0 };
+    if split > 0 {
+        job.append(&text[..split], 0.0, TextFormat::simple(font.clone(), dim));
+    }
+    job.append(&text[split..], 0.0, TextFormat::simple(font, bright));
+    job
+}
+
+pub fn prefix_split(text: &str, prefix_len: u8) -> usize {
+    let hextets = (prefix_len / 16) as usize;
+    if hextets == 0 {
+        return 0;
+    }
+    let mut colons = 0;
+    for (i, ch) in text.char_indices() {
+        if ch == ':' {
+            colons += 1;
+            if colons == hextets {
+                if text[..i + 1].contains("::") {
+                    return 0;
+                }
+                let mut end = i + 1;
+                if text[end..].starts_with(':') {
+                    end += 1;
+                }
+                return end;
+            }
+        }
+    }
+    0
 }
 
 impl App {
@@ -128,7 +180,7 @@ impl App {
                 Frame::new()
                     .fill(p.panel)
                     .stroke(Stroke::new(1.0, p.border))
-                    .inner_margin(Margin::symmetric(16, 10)),
+                    .inner_margin(Margin::symmetric(16, 8)),
             )
             .show(ui, |ui| self.header(ui));
 
@@ -136,8 +188,8 @@ impl App {
             egui::Panel::top("banner")
                 .frame(
                     Frame::new()
-                        .fill(p.warn.gamma_multiply(if p.dark { 0.16 } else { 0.18 }))
-                        .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.6)))
+                        .fill(p.warn.gamma_multiply(0.12))
+                        .stroke(Stroke::new(1.0, p.warn.gamma_multiply(0.5)))
                         .inner_margin(Margin::symmetric(16, 8)),
                 )
                 .show(ui, |ui| self.banner(ui));
@@ -169,7 +221,6 @@ impl App {
             .show(ui, |ui| match self.tab {
                 Tab::Generate => self.generate_tab(ui),
                 Tab::Proxy => self.proxy_tab(ui),
-                Tab::Logs => self.logs_tab(ui),
                 Tab::Settings => self.settings_tab(ui),
             });
 
@@ -184,34 +235,28 @@ impl App {
                 ui.add(egui::Image::new(logo).fit_to_exact_size(Vec2::splat(26.0)));
                 ui.add_space(2.0);
             }
-            ui.label(RichText::new("ProxyV6 MMO").size(20.0).strong().color(p.accent));
+            ui.label(RichText::new("ProxyV6 MMO").font(theme::semibold(17.0)).color(p.text));
             ui.add_space(18.0);
             let tabs = [
                 (Tab::Generate, "Tạo địa chỉ"),
                 (Tab::Proxy, "Địa chỉ & Proxy"),
-                (Tab::Logs, "Nhật ký"),
                 (Tab::Settings, "Cài đặt"),
             ];
             for (tab, label) in tabs {
                 let selected = self.tab == tab;
-                let mut alert = false;
                 let text = match tab {
                     Tab::Proxy if !self.rows.is_empty() => format!("{label} ({})", self.rows.len()),
-                    Tab::Logs if self.unseen_errors > 0 => {
-                        alert = true;
-                        format!("{label} ({} lỗi)", self.unseen_errors)
-                    }
                     _ => label.to_string(),
                 };
-                if tab_button(ui, &p, text, selected, alert).clicked() {
+                if tab_button(ui, &p, text, selected).clicked() {
                     self.tab = tab;
                 }
             }
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 let label = if self.settings.dark {
-                    "Chuyển sang giao diện sáng"
+                    "Giao diện sáng"
                 } else {
-                    "Chuyển sang giao diện tối"
+                    "Giao diện tối"
                 };
                 if ui.add(plain_button(label)).clicked() {
                     let dark = !self.settings.dark;
@@ -224,7 +269,7 @@ impl App {
     fn banner(&mut self, ui: &mut egui::Ui) {
         let p = self.pal;
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Chưa có quyền quản trị.").strong().color(p.warn));
+            ui.label(RichText::new("Chưa có quyền quản trị.").font(theme::semibold(14.0)).color(p.warn));
             ui.label(RichText::new(platform::elevation_hint()).color(p.text));
             if platform::can_relaunch_elevated() {
                 if self.relaunching {
@@ -318,26 +363,11 @@ impl App {
                     format!("Gỡ {} địa chỉ", t.len()),
                 )
             }
-            Confirm::StopProxy => {
-                let (target, active) = match &self.proxy {
-                    Some(h) => {
-                        let last = h.start_port as usize + h.addrs.len().saturating_sub(1);
-                        let active = h.stats.active.load(std::sync::atomic::Ordering::Relaxed);
-                        (format!("{}:{}-{} ({} cổng)", h.bind, h.start_port, last, h.addrs.len()), active)
-                    }
-                    None => (String::new(), 0),
-                };
-                (
-                    "Dừng proxy?".to_string(),
-                    format!("Dừng proxy tại {target}. {active} kết nối đang hoạt động sẽ bị ngắt."),
-                    "Dừng proxy".to_string(),
-                )
-            }
         };
         let mut decision: Option<bool> = None;
         let resp = egui::Modal::new(egui::Id::unique("confirm-modal")).show(ui.ctx(), |ui| {
             ui.set_width(380.0);
-            ui.label(RichText::new(heading).size(16.0).strong());
+            ui.label(RichText::new(heading).font(theme::semibold(16.0)));
             ui.add_space(6.0);
             ui.label(body);
             ui.add_space(12.0);
@@ -365,16 +395,11 @@ impl App {
 
     fn draw_toast(&mut self, ui: &mut egui::Ui) {
         let Some(t) = &self.toast else { return };
-        let fill = match t.level {
-            ToastLevel::Info => {
-                if self.pal.dark {
-                    Color32::from_rgb(52, 58, 84)
-                } else {
-                    Color32::from_rgb(30, 36, 56)
-                }
-            }
-            ToastLevel::Success => Color32::from_rgb(4, 120, 87),
-            ToastLevel::Error => Color32::from_rgb(185, 28, 28),
+        let p = self.pal;
+        let strip = match t.level {
+            ToastLevel::Info => p.info,
+            ToastLevel::Success => p.success,
+            ToastLevel::Error => p.error,
         };
         let text = t.text.clone();
         let resp = egui::Area::new(egui::Id::unique("toast"))
@@ -383,13 +408,36 @@ impl App {
             .interactable(true)
             .sense(Sense::click())
             .show(ui.ctx(), |ui| {
-                Frame::new()
-                    .fill(fill)
-                    .corner_radius(CornerRadius::same(10))
-                    .inner_margin(Margin::symmetric(16, 9))
+                let shadow = ui.style().visuals.popup_shadow;
+                let framed = Frame::new()
+                    .fill(p.card)
+                    .stroke(Stroke::new(1.0, p.border))
+                    .shadow(shadow)
+                    .corner_radius(CornerRadius::same(6))
+                    .inner_margin(Margin {
+                        left: 18,
+                        right: 16,
+                        top: 9,
+                        bottom: 9,
+                    })
                     .show(ui, |ui| {
-                        ui.label(RichText::new(text).color(Color32::WHITE));
+                        ui.label(RichText::new(text).color(p.text));
                     });
+                let rect = framed.response.rect;
+                let bar = egui::Rect::from_min_max(
+                    rect.left_top() + egui::vec2(1.0, 1.0),
+                    egui::pos2(rect.left() + 4.0, rect.bottom() - 1.0),
+                );
+                ui.painter().rect_filled(
+                    bar,
+                    CornerRadius {
+                        nw: 5,
+                        sw: 5,
+                        ne: 0,
+                        se: 0,
+                    },
+                    strip,
+                );
             });
         if resp.response.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
@@ -402,5 +450,5 @@ impl App {
 
 pub fn outline(ui: &egui::Ui, rect: egui::Rect, color: Color32, width: f32) {
     ui.painter()
-        .rect_stroke(rect, CornerRadius::same(12), Stroke::new(width, color), StrokeKind::Inside);
+        .rect_stroke(rect, CornerRadius::same(6), Stroke::new(width, color), StrokeKind::Inside);
 }

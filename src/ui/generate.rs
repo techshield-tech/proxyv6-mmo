@@ -1,12 +1,55 @@
 use eframe::egui::{self, DragValue, Response, RichText, TextEdit};
 
+use std::net::Ipv6Addr;
+
 use super::{badge, card, hint, plain_button, primary, title};
 use crate::app::App;
 use crate::net::generator::{self, Mode, MAX_COUNT};
-use crate::net::platform;
+use crate::net::interfaces::V6Entry;
+use crate::net::{network_of, platform};
+use crate::theme;
 
 fn enter_pressed(ui: &egui::Ui, resp: &Response) -> bool {
     resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter))
+}
+
+struct PrefixGroup {
+    network: Ipv6Addr,
+    prefix_len: u8,
+    count: usize,
+    global: bool,
+    public: bool,
+    temporary: usize,
+    tentative: usize,
+}
+
+fn v6_prefix_groups(entries: &[V6Entry], public: Option<&crate::net::public::PublicInfo>) -> Vec<PrefixGroup> {
+    let mut groups: Vec<PrefixGroup> = Vec::new();
+    for e in entries {
+        let len = if e.prefix_len == 0 || e.prefix_len >= 128 { 64 } else { e.prefix_len };
+        let network = network_of(e.addr, len);
+        let idx = match groups.iter().position(|g| g.network == network && g.prefix_len == len) {
+            Some(i) => i,
+            None => {
+                groups.push(PrefixGroup {
+                    network,
+                    prefix_len: len,
+                    count: 0,
+                    global: e.is_global(),
+                    public: false,
+                    temporary: 0,
+                    tentative: 0,
+                });
+                groups.len() - 1
+            }
+        };
+        let g = &mut groups[idx];
+        g.count += 1;
+        g.public |= public.is_some_and(|i| i.matches(&e.addr));
+        g.temporary += e.temporary as usize;
+        g.tentative += e.tentative as usize;
+    }
+    groups
 }
 
 impl App {
@@ -76,27 +119,27 @@ impl App {
                 if a.ipv6.is_empty() {
                     ui.label(RichText::new("không có").color(p.weak));
                 } else {
+                    let groups = v6_prefix_groups(&a.ipv6, public_info.as_ref());
                     ui.vertical(|ui| {
-                        for e in a.ipv6.iter().take(12) {
+                        for g in &groups {
                             ui.horizontal(|ui| {
-                                let color = if e.is_global() { p.accent } else { p.text };
-                                ui.label(RichText::new(format!("{}/{}", e.addr, e.prefix_len)).monospace().color(color));
-                                if e.is_global() {
+                                let text = format!("{}/{}", g.network, g.prefix_len);
+                                let color = if g.global { p.accent } else { p.text };
+                                ui.label(RichText::new(text).monospace().color(color));
+                                hint(ui, &p, &format!("{} địa chỉ", g.count));
+                                if g.global {
                                     badge(ui, "global", p.accent);
                                 }
-                                if public_info.as_ref().is_some_and(|i| i.matches(&e.addr)) {
+                                if g.public {
                                     badge(ui, "public", p.success);
                                 }
-                                if e.temporary {
-                                    badge(ui, "tạm thời", p.warn);
+                                if g.temporary > 0 {
+                                    badge(ui, &format!("tạm thời {}", g.temporary), p.warn);
                                 }
-                                if e.tentative {
-                                    badge(ui, "chờ xác nhận", p.weak);
+                                if g.tentative > 0 {
+                                    badge(ui, &format!("chờ xác nhận {}", g.tentative), p.weak);
                                 }
                             });
-                        }
-                        if a.ipv6.len() > 12 {
-                            hint(ui, &p, &format!("... và {} địa chỉ khác", a.ipv6.len() - 12));
                         }
                     });
                 }
@@ -255,7 +298,7 @@ impl App {
 
             ui.add_space(6.0);
             for msg in &elig.blocked {
-                ui.label(RichText::new(msg.as_str()).color(p.error).strong());
+                ui.label(RichText::new(msg.as_str()).font(theme::semibold(14.0)).color(p.error));
             }
             for msg in &elig.warnings {
                 ui.label(RichText::new(msg.as_str()).color(p.warn));
@@ -268,7 +311,7 @@ impl App {
                 if elig.allowed() || elig.blocked.join("
 ") != *err {
                     ui.add_space(4.0);
-                    ui.label(RichText::new(err.as_str()).color(p.error).strong());
+                    ui.label(RichText::new(err.as_str()).font(theme::semibold(14.0)).color(p.error));
                 }
             }
 

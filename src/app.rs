@@ -1,12 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use eframe::egui::{self, Color32};
+use eframe::egui;
 
 use crate::net::generator::{self, GenParams, Mode};
 use crate::net::interfaces::{self, Adapter, V6Entry};
@@ -22,7 +21,6 @@ use crate::theme::{self, Palette};
 pub enum Tab {
     Generate,
     Proxy,
-    Logs,
     Settings,
 }
 
@@ -41,15 +39,6 @@ impl Status {
             Status::Added => "Đã thêm",
             Status::Failed => "Thất bại",
             Status::Removed => "Đã gỡ",
-        }
-    }
-
-    pub fn color(self, p: &Palette) -> Color32 {
-        match self {
-            Status::Pending => p.weak,
-            Status::Added => p.success,
-            Status::Failed => p.error,
-            Status::Removed => p.warn,
         }
     }
 
@@ -86,13 +75,14 @@ pub struct Row {
 }
 
 impl Row {
-    pub fn test_rank(&self) -> u8 {
-        match self.test {
-            TestState::None => 0,
-            TestState::Running => 1,
-            TestState::Ok => 2,
-            TestState::Fail(_) => 3,
-        }
+    pub fn replace_addr(&mut self, addr: Ipv6Addr) {
+        self.addr = addr;
+        self.text = addr.to_string();
+        self.status = Status::Pending;
+        self.test = TestState::None;
+        self.latency_ms = None;
+        self.egress = None;
+        self.error = None;
     }
 
     fn new(addr: Ipv6Addr, status: Status, adapter_index: u32, adapter_name: String, prefix_len: u8) -> Self {
@@ -112,18 +102,45 @@ impl Row {
     }
 }
 
+pub fn is_online(proxy_on: bool, ports: &HashMap<Ipv6Addr, u16>, r: &Row) -> bool {
+    r.status == Status::Added
+        && proxy_on
+        && ports.contains_key(&r.addr)
+        && !matches!(r.test, TestState::Fail(_))
+}
+
+pub fn status_hint(proxy_on: bool, ports: &HashMap<Ipv6Addr, u16>, r: &Row) -> String {
+    let err = |prefix: &str| match &r.error {
+        Some(e) => format!("{prefix}: {e}"),
+        None => prefix.to_string(),
+    };
+    match r.status {
+        Status::Pending => "Chờ áp dụng".to_string(),
+        Status::Removed => "Đã gỡ".to_string(),
+        Status::Failed => err("Thất bại"),
+        Status::Added => {
+            if !proxy_on {
+                return "Proxy đang tắt".to_string();
+            }
+            if !ports.contains_key(&r.addr) {
+                return "Proxy chưa cập nhật cho địa chỉ này".to_string();
+            }
+            match &r.test {
+                TestState::Fail(e) => format!("Kiểm tra lỗi: {e}"),
+                TestState::Running => "Đang kiểm tra...".to_string(),
+                _ if r.error.is_some() => err("Gỡ thất bại"),
+                _ => "Proxy đang chạy".to_string(),
+            }
+        }
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LogLevel {
     Info,
     Ok,
     Warn,
     Error,
-}
-
-pub struct LogEntry {
-    pub time: String,
-    pub level: LogLevel,
-    pub text: String,
 }
 
 pub enum Msg {
@@ -138,7 +155,6 @@ pub enum Msg {
     PublicV6 { info: PublicInfo, select: bool, force: bool },
     ProxyStopped,
     Relaunch(Result<(), String>),
-    Export(Result<Option<(PathBuf, usize)>, String>),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -154,8 +170,6 @@ pub struct Op {
     pub ok: usize,
     pub fail: usize,
     pub started: Instant,
-    pub cancel: Arc<AtomicBool>,
-    pub cancelling: bool,
     pub targets: Vec<Target>,
     pub addr_target: HashMap<Ipv6Addr, usize>,
 }
@@ -165,8 +179,6 @@ pub struct TestRun {
     pub done: usize,
     pub ok: usize,
     pub mismatch: usize,
-    pub cancel: Arc<AtomicBool>,
-    pub cancelling: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -195,13 +207,11 @@ impl Toast {
 pub enum Confirm {
     RemoveSelected,
     RemoveAll,
-    StopProxy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ResultAction {
     FilterRows(&'static str),
-    OpenLogs,
 }
 
 pub struct LastResult {
@@ -214,7 +224,6 @@ pub struct LastResult {
 pub enum SortKey {
     Addr,
     Status,
-    Test,
     Latency,
 }
 
@@ -242,31 +251,6 @@ impl Counts {
             self.selected_added
         } else {
             self.added
-        }
-    }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ExportScope {
-    All,
-    Selected,
-    Added,
-}
-
-impl ExportScope {
-    pub fn from_u8(v: u8) -> Self {
-        match v {
-            0 => ExportScope::All,
-            1 => ExportScope::Selected,
-            _ => ExportScope::Added,
-        }
-    }
-
-    pub fn to_u8(self) -> u8 {
-        match self {
-            ExportScope::All => 0,
-            ExportScope::Selected => 1,
-            ExportScope::Added => 2,
         }
     }
 }
@@ -302,14 +286,12 @@ pub struct App {
     pub visible_dirty: bool,
     pub filter: String,
     pub tab: Tab,
-    pub logs: Vec<LogEntry>,
     pub tx: Sender<Msg>,
     pub rx: Receiver<Msg>,
     pub op: Option<Op>,
     pub test: Option<TestRun>,
     pub elevated: bool,
     pub tools_error: Option<String>,
-    pub export_scope: ExportScope,
     pub clipboard: Option<arboard::Clipboard>,
     pub toast: Option<Toast>,
     pub font_path: Option<&'static str>,
@@ -320,12 +302,9 @@ pub struct App {
     pub user_chose_adapter: bool,
     pub pending_confirm: Option<Confirm>,
     pub last_result: Option<LastResult>,
-    pub unseen_errors: usize,
-    pub logs_errors_only: bool,
     pub stopping_proxy: bool,
     pub start_after_stop: bool,
     pub relaunching: bool,
-    pub exporting: bool,
     pub settings_dirty_at: Option<Instant>,
     pub counts: Counts,
     pub port_map: HashMap<Ipv6Addr, u16>,
@@ -333,6 +312,8 @@ pub struct App {
     pub port_map_key: Option<(bool, u16, usize)>,
     pub sort: Option<(SortKey, bool)>,
     pub last_clicked: Option<usize>,
+    pub pending_delete: HashSet<Ipv6Addr>,
+    pub pending_regen: HashMap<Ipv6Addr, Ipv6Addr>,
     pub logo: Option<egui::TextureHandle>,
 }
 
@@ -348,7 +329,6 @@ impl App {
         } else {
             settings.offset_text.clone()
         };
-        let export_scope = ExportScope::from_u8(settings.export_scope);
         let only_global = settings.only_global;
         theme::apply(&ctx, settings.dark);
         let (tx, rx) = channel();
@@ -374,14 +354,12 @@ impl App {
             visible_dirty: true,
             filter: String::new(),
             tab: Tab::Generate,
-            logs: Vec::new(),
             tx,
             rx,
             op: None,
             test: None,
             elevated,
             tools_error,
-            export_scope,
             clipboard: None,
             toast: None,
             font_path,
@@ -392,12 +370,9 @@ impl App {
             user_chose_adapter: false,
             pending_confirm: None,
             last_result: None,
-            unseen_errors: 0,
-            logs_errors_only: false,
             stopping_proxy: false,
             start_after_stop: false,
             relaunching: false,
-            exporting: false,
             settings_dirty_at: None,
             counts: Counts::default(),
             port_map: HashMap::new(),
@@ -405,6 +380,8 @@ impl App {
             port_map_key: None,
             sort: None,
             last_clicked: None,
+            pending_delete: HashSet::new(),
+            pending_regen: HashMap::new(),
             logo: None,
         };
         app.logo = theme::load_logo(&app.ctx);
@@ -436,18 +413,13 @@ impl App {
     }
 
     pub fn log(&mut self, level: LogLevel, text: impl Into<String>) {
-        let entry = LogEntry {
-            time: chrono::Local::now().format("%H:%M:%S").to_string(),
-            level,
-            text: text.into(),
+        let tag = match level {
+            LogLevel::Info => "INFO",
+            LogLevel::Ok => "OK",
+            LogLevel::Warn => "WARN",
+            LogLevel::Error => "ERR",
         };
-        if level == LogLevel::Error && self.tab != Tab::Logs {
-            self.unseen_errors += 1;
-        }
-        self.logs.push(entry);
-        if self.logs.len() > 5000 {
-            self.logs.drain(0..500);
-        }
+        eprintln!("[{}] {tag} {}", chrono::Local::now().format("%H:%M:%S"), text.into());
     }
 
     pub fn toast_level(&mut self, text: impl Into<String>, level: ToastLevel) {
@@ -646,7 +618,6 @@ impl App {
         let mut settings = self.settings.clone();
         settings.sequential = self.mode == Mode::Sequential;
         settings.offset_text = self.offset_text.clone();
-        settings.export_scope = self.export_scope.to_u8();
         settings.only_global = self.only_global;
         settings.custom_prefix = self.custom_prefix;
         settings.prefix_text = if self.custom_prefix { self.prefix_text.clone() } else { String::new() };
@@ -667,7 +638,7 @@ impl App {
         let needle = self.filter.trim().to_lowercase();
         let status_hit = [Status::Pending, Status::Added, Status::Failed, Status::Removed]
             .map(|s| needle.is_empty() || s.label().to_lowercase().contains(&needle));
-        let test_hit = ["", "đang thử", "sống", "chết"].map(|l| !needle.is_empty() && !l.is_empty() && l.contains(&needle));
+        let online_hit = [needle.is_empty() || "offline".contains(&needle), needle.is_empty() || "online".contains(&needle)];
         let mut visible: Vec<usize> = self
             .rows
             .iter()
@@ -676,18 +647,22 @@ impl App {
                 needle.is_empty()
                     || r.text.contains(&needle)
                     || status_hit[r.status.rank() as usize]
-                    || test_hit[r.test_rank() as usize]
+                    || online_hit[is_online(self.proxy.is_some(), &self.port_map, r) as usize]
             })
             .map(|(i, _)| i)
             .collect();
         if let Some((key, asc)) = self.sort {
+            let online: Vec<bool> = if key == SortKey::Status {
+                self.rows.iter().map(|r| is_online(self.proxy.is_some(), &self.port_map, r)).collect()
+            } else {
+                Vec::new()
+            };
             let rows = &self.rows;
             visible.sort_by(|&x, &y| {
                 let (rx, ry) = (&rows[x], &rows[y]);
                 let ord = match key {
                     SortKey::Addr => rx.addr.cmp(&ry.addr),
-                    SortKey::Status => rx.status.rank().cmp(&ry.status.rank()).then(rx.addr.cmp(&ry.addr)),
-                    SortKey::Test => rx.test_rank().cmp(&ry.test_rank()).then(rx.addr.cmp(&ry.addr)),
+                    SortKey::Status => online[y].cmp(&online[x]).then(rx.addr.cmp(&ry.addr)),
                     SortKey::Latency => rx
                         .latency_ms
                         .unwrap_or(u32::MAX)
@@ -963,21 +938,6 @@ impl App {
                 let t = self.remove_targets(false);
                 self.start_remove(t);
             }
-            Confirm::StopProxy => self.stop_proxy(),
-        }
-    }
-
-    pub fn cancel_op(&mut self) {
-        if let Some(op) = &mut self.op {
-            op.cancelling = true;
-            op.cancel.store(true, Ordering::Relaxed);
-        }
-    }
-
-    pub fn cancel_test(&mut self) {
-        if let Some(t) = &mut self.test {
-            t.cancelling = true;
-            t.cancel.store(true, Ordering::Relaxed);
         }
     }
 
@@ -1063,6 +1023,115 @@ impl App {
         self.spawn_op(OpKind::Remove, idxs.len(), groups, ApplyOptions::default());
     }
 
+    pub fn delete_row(&mut self, i: usize) {
+        if i >= self.rows.len() || self.busy() {
+            return;
+        }
+        if self.rows[i].status == Status::Added {
+            let addr = self.rows[i].addr;
+            self.pending_delete.insert(addr);
+            self.start_remove(vec![i]);
+            if self.op.is_none() {
+                self.pending_delete.remove(&addr);
+            }
+            return;
+        }
+        let row = self.rows.remove(i);
+        self.rebuild_index();
+        self.log(LogLevel::Info, format!("Đã xóa {} khỏi danh sách", row.addr));
+    }
+
+    pub fn regenerate_row(&mut self, i: usize) {
+        if i >= self.rows.len() || self.busy() {
+            return;
+        }
+        let (old, prefix_len, status, adapter_index, adapter_name) = {
+            let r = &self.rows[i];
+            (r.addr, r.prefix_len, r.status, r.adapter_index, r.adapter_name.clone())
+        };
+        if status == Status::Added && !self.precheck() {
+            return;
+        }
+        let mut exclude: HashSet<Ipv6Addr> = interfaces::all_existing_v6();
+        exclude.extend(self.rows.iter().map(|r| r.addr));
+        let params = GenParams {
+            prefix: network_of(old, prefix_len),
+            prefix_len,
+            count: 1,
+            mode: Mode::Random,
+            start_offset: 0,
+        };
+        let new = match generator::generate(&params, &exclude) {
+            Ok(v) => match v.first() {
+                Some(a) => *a,
+                None => return,
+            },
+            Err(e) => {
+                self.log(LogLevel::Error, format!("Không tạo được IPv6 mới: {e}"));
+                self.toast_err(e.to_string());
+                return;
+            }
+        };
+        if status != Status::Added {
+            self.rows[i].replace_addr(new);
+            self.rebuild_index();
+            self.log(LogLevel::Info, format!("Đã đổi {old} thành {new}"));
+            return;
+        }
+        let target = Target {
+            index: adapter_index,
+            name: adapter_name,
+            prefix_len,
+        };
+        let opts = ApplyOptions {
+            persistent: self.settings.persistent && platform::supports_persistent(),
+            nodad: self.settings.nodad && platform::supports_nodad(),
+        };
+        self.pending_regen.insert(old, new);
+        self.spawn_replace(target, old, new, opts);
+    }
+
+    fn spawn_replace(&mut self, target: Target, old: Ipv6Addr, new: Ipv6Addr, opts: ApplyOptions) {
+        self.last_result = None;
+        self.op = Some(Op {
+            kind: OpKind::Apply,
+            total: 2,
+            done: 0,
+            ok: 0,
+            fail: 0,
+            started: Instant::now(),
+            targets: vec![target.clone()],
+            addr_target: HashMap::from([(old, 0), (new, 0)]),
+        });
+        self.log(LogLevel::Info, format!("Đổi {old} sang {new}..."));
+        let tx = self.tx.clone();
+        let ctx = self.ctx.clone();
+        std::thread::spawn(move || {
+            let removed: Vec<(Ipv6Addr, Result<(), String>)> = platform::remove_chunk(&target, &[old])
+                .into_iter()
+                .map(|o| (o.addr, o.result))
+                .collect();
+            let removed_ok = removed.iter().all(|(_, r)| r.is_ok());
+            let _ = tx.send(Msg::Outcomes {
+                remove: true,
+                items: removed,
+            });
+            ctx.request_repaint();
+            if removed_ok {
+                let added = platform::add_chunk(&target, &[new], opts)
+                    .into_iter()
+                    .map(|o| (o.addr, o.result))
+                    .collect();
+                let _ = tx.send(Msg::Outcomes {
+                    remove: false,
+                    items: added,
+                });
+            }
+            let _ = tx.send(Msg::OpDone);
+            ctx.request_repaint();
+        });
+    }
+
     fn spawn_op(&mut self, kind: OpKind, total: usize, groups: Vec<(Target, Vec<Ipv6Addr>)>, opts: ApplyOptions) {
         let cancel = Arc::new(AtomicBool::new(false));
         let mut targets: Vec<Target> = Vec::with_capacity(groups.len());
@@ -1082,8 +1151,6 @@ impl App {
             ok: 0,
             fail: 0,
             started: Instant::now(),
-            cancel: Arc::clone(&cancel),
-            cancelling: false,
             targets,
             addr_target,
         });
@@ -1189,8 +1256,6 @@ impl App {
             done: 0,
             ok: 0,
             mismatch: 0,
-            cancel: Arc::clone(&cancel),
-            cancelling: false,
         });
         let threads = self.settings.test_threads;
         let timeout = Duration::from_secs(self.settings.test_timeout_secs.max(1));
@@ -1240,7 +1305,6 @@ impl App {
                 Msg::PublicV6 { info, select, force } => self.handle_public(info, select, force),
                 Msg::ProxyStopped => self.handle_proxy_stopped(),
                 Msg::Relaunch(res) => self.handle_relaunch(res),
-                Msg::Export(res) => self.handle_export(res),
             }
         }
         if changed {
@@ -1251,9 +1315,30 @@ impl App {
     fn handle_outcomes(&mut self, remove: bool, items: Vec<(Ipv6Addr, Result<(), String>)>) {
         let mut logs: Vec<(LogLevel, String)> = Vec::new();
         let mut restore: Vec<Row> = Vec::new();
+        let mut drop_addrs: HashSet<Ipv6Addr> = HashSet::new();
+        let mut reindex = false;
         for (addr, res) in items {
             let ok = res.is_ok();
-            if let Some(&i) = self.by_addr.get(&addr) {
+            let regen = if remove { self.pending_regen.remove(&addr) } else { None };
+            if let Some(new_addr) = regen {
+                match (self.by_addr.get(&addr).copied(), res) {
+                    (Some(i), Ok(())) => {
+                        self.rows[i].replace_addr(new_addr);
+                        reindex = true;
+                        logs.push((LogLevel::Ok, format!("Đã gỡ {addr}, đang thêm {new_addr}")));
+                    }
+                    (Some(i), Err(e)) => {
+                        logs.push((LogLevel::Error, format!("Gỡ {addr} thất bại, giữ nguyên địa chỉ: {e}")));
+                        self.rows[i].error = Some(e);
+                    }
+                    (None, Ok(())) => {
+                        logs.push((LogLevel::Info, format!("Đã gỡ {addr} (không còn trong danh sách)")));
+                    }
+                    (None, Err(e)) => {
+                        logs.push((LogLevel::Error, format!("Kết quả cho {addr} (không còn trong danh sách): {e}")));
+                    }
+                }
+            } else if let Some(&i) = self.by_addr.get(&addr) {
                 let row = &mut self.rows[i];
                 match (remove, res) {
                     (false, Ok(())) => {
@@ -1266,6 +1351,10 @@ impl App {
                         logs.push((LogLevel::Error, format!("Thêm {addr} thất bại: {e}")));
                         row.error = Some(e);
                     }
+                    (true, Ok(())) if self.pending_delete.remove(&addr) => {
+                        drop_addrs.insert(addr);
+                        logs.push((LogLevel::Ok, format!("Đã gỡ và xóa {addr}")));
+                    }
                     (true, Ok(())) => {
                         row.status = Status::Removed;
                         row.selected = false;
@@ -1276,6 +1365,7 @@ impl App {
                         logs.push((LogLevel::Ok, format!("Đã gỡ {addr}")));
                     }
                     (true, Err(e)) => {
+                        self.pending_delete.remove(&addr);
                         logs.push((LogLevel::Error, format!("Gỡ {addr} thất bại: {e}")));
                         row.error = Some(e);
                     }
@@ -1316,8 +1406,15 @@ impl App {
                 }
             }
         }
+        if !drop_addrs.is_empty() {
+            self.rows.retain(|r| !drop_addrs.contains(&r.addr));
+            reindex = true;
+        }
         if !restore.is_empty() {
             self.rows.extend(restore);
+            reindex = true;
+        }
+        if reindex {
             self.rebuild_index();
         }
         self.port_map_dirty = true;
@@ -1331,6 +1428,8 @@ impl App {
     }
 
     fn finish_op(&mut self) {
+        self.pending_delete.clear();
+        self.pending_regen.clear();
         if let Some(op) = self.op.take() {
             let apply = op.kind == OpKind::Apply;
             let verb = if apply { "Áp dụng" } else { "Gỡ" };
@@ -1343,14 +1442,11 @@ impl App {
                     op.ok, op.fail, secs
                 ),
             );
-            let stopped = if op.cancelling { " (đã dừng)" } else { "" };
-            let summary = format!("{verb} xong{stopped}: {} OK, {} lỗi", op.ok, op.fail);
-            let action = if op.fail == 0 {
-                None
-            } else if apply {
+            let summary = format!("{verb} xong: {} OK, {} lỗi", op.ok, op.fail);
+            let action = if op.fail > 0 && apply {
                 Some(ResultAction::FilterRows(Status::Failed.label()))
             } else {
-                Some(ResultAction::OpenLogs)
+                None
             };
             if op.fail == 0 {
                 self.toast_ok(summary.clone());
@@ -1445,13 +1541,10 @@ impl App {
                 );
             }
             if t.done == 0 {
-                if !t.cancelling {
-                    self.toast_err("Proxy chưa sẵn sàng, chưa kiểm tra được");
-                }
+                self.toast_err("Proxy chưa sẵn sàng, chưa kiểm tra được");
             } else {
                 let dead = t.done.saturating_sub(t.ok);
-                let stopped = if t.cancelling { " (đã dừng)" } else { "" };
-                let summary = format!("Kiểm tra xong{stopped}: {}/{} proxy sống, {dead} lỗi", t.ok, t.done);
+                let summary = format!("Kiểm tra xong: {}/{} proxy sống, {dead} lỗi", t.ok, t.done);
                 if dead == 0 {
                     self.toast_ok(summary.clone());
                 } else {
@@ -1460,7 +1553,7 @@ impl App {
                 self.last_result = Some(LastResult {
                     text: summary,
                     level,
-                    action: if dead > 0 { Some(ResultAction::FilterRows("Chết")) } else { None },
+                    action: if dead > 0 { Some(ResultAction::FilterRows("Offline")) } else { None },
                 });
             }
         }
@@ -1475,63 +1568,6 @@ impl App {
         let removed = before - self.rows.len();
         self.rebuild_index();
         self.log(LogLevel::Info, format!("Đã xóa {removed} dòng khỏi danh sách (không ảnh hưởng card mạng)"));
-    }
-
-    fn in_export_scope(&self, r: &Row) -> bool {
-        match self.export_scope {
-            ExportScope::All => true,
-            ExportScope::Selected => r.selected,
-            ExportScope::Added => r.status == Status::Added,
-        }
-    }
-
-    pub fn export_count(&self) -> usize {
-        let fmt = self.settings.export_format;
-        self.rows
-            .iter()
-            .filter(|r| self.in_export_scope(r))
-            .filter(|r| fmt < 3 || self.port_map.contains_key(&r.addr))
-            .count()
-    }
-
-    pub fn export_text(&self) -> (String, usize) {
-        let fmt = self.settings.export_format;
-        let port = self.settings.export_port.trim().to_string();
-        let host = if fmt >= 3 { self.proxy_export_host() } else { Ipv4Addr::LOCALHOST };
-        let ports = &self.port_map;
-        let lines: Vec<String> = self
-            .rows
-            .iter()
-            .filter(|r| self.in_export_scope(r))
-            .filter_map(|r| match fmt {
-                1 => Some(format!("[{}]:{}", r.addr, port)),
-                2 => Some(format!("{}/{}", r.addr, r.prefix_len)),
-                3 => ports.get(&r.addr).map(|p| format!("{host}:{p}")),
-                4 => ports
-                    .get(&r.addr)
-                    .map(|p| format!("{host}:{p}:{}:{}", self.settings.proxy_user, self.settings.proxy_pass)),
-                _ => Some(r.addr.to_string()),
-            })
-            .collect();
-        (lines.join("\n"), lines.len())
-    }
-
-    pub fn export_valid(&self) -> Result<(), String> {
-        let fmt = self.settings.export_format;
-        if fmt == 1 && self.settings.export_port.trim().parse::<u16>().is_err() {
-            return Err("Cổng không hợp lệ (0-65535)".into());
-        }
-        if fmt >= 3 {
-            self.proxy_bind_ip()?;
-            proxy::port_range(self.proxy_start_port(), self.proxy_export_len())?;
-        }
-        if fmt == 4 {
-            if !self.settings.proxy_auth {
-                return Err("Hãy bật xác thực ở phần Proxy để xuất ip:port:user:pass".into());
-            }
-            self.proxy_credentials()?;
-        }
-        Ok(())
     }
 
     pub fn proxy_bind_ip(&self) -> Result<Ipv4Addr, String> {
@@ -1561,13 +1597,6 @@ impl App {
             .collect()
     }
 
-    pub fn proxy_export_len(&self) -> usize {
-        match &self.proxy {
-            Some(h) => h.addrs.len(),
-            None => self.added_count(),
-        }
-    }
-
     pub fn proxy_export_addrs(&self) -> Vec<Ipv6Addr> {
         match &self.proxy {
             Some(h) => h.addrs.clone(),
@@ -1576,6 +1605,13 @@ impl App {
     }
 
     pub fn proxy_credentials(&self) -> Result<Option<Credentials>, String> {
+        match &self.proxy {
+            Some(h) => Ok(h.auth.clone()),
+            None => self.settings_credentials(),
+        }
+    }
+
+    pub fn settings_credentials(&self) -> Result<Option<Credentials>, String> {
         if !self.settings.proxy_auth {
             return Ok(None);
         }
@@ -1613,6 +1649,7 @@ impl App {
             self.port_map = self.compute_port_map();
             self.port_map_key = Some(key);
             self.port_map_dirty = false;
+            self.visible_dirty = true;
         }
     }
 
@@ -1718,74 +1755,6 @@ impl App {
         }
     }
 
-    pub fn copy_export(&mut self) {
-        self.ensure_port_map();
-        if let Err(e) = self.export_valid() {
-            self.toast_err(e);
-            return;
-        }
-        let (text, n) = self.export_text();
-        if n == 0 {
-            self.toast_err("Không có địa chỉ để xuất");
-            return;
-        }
-        if self.copy_text(text) {
-            self.toast_ok(format!("Đã sao chép {n} địa chỉ"));
-            self.log(LogLevel::Info, format!("Đã sao chép {n} địa chỉ vào clipboard"));
-        } else {
-            self.toast_err("Không truy cập được clipboard");
-        }
-    }
-
-    pub fn save_export(&mut self) {
-        if self.exporting {
-            return;
-        }
-        self.ensure_port_map();
-        if let Err(e) = self.export_valid() {
-            self.toast_err(e);
-            return;
-        }
-        let (text, n) = self.export_text();
-        if n == 0 {
-            self.toast_err("Không có địa chỉ để xuất");
-            return;
-        }
-        self.exporting = true;
-        let tx = self.tx.clone();
-        let ctx = self.ctx.clone();
-        std::thread::spawn(move || {
-            let picked = rfd::FileDialog::new()
-                .set_title("Lưu danh sách IPv6")
-                .set_file_name("ipv6.txt")
-                .add_filter("Văn bản", &["txt"])
-                .save_file();
-            let res = match picked {
-                None => Ok(None),
-                Some(path) => std::fs::write(&path, text)
-                    .map(|()| Some((path, n)))
-                    .map_err(|e| e.to_string()),
-            };
-            let _ = tx.send(Msg::Export(res));
-            ctx.request_repaint();
-        });
-    }
-
-    fn handle_export(&mut self, res: Result<Option<(PathBuf, usize)>, String>) {
-        self.exporting = false;
-        match res {
-            Ok(Some((path, n))) => {
-                self.toast_ok(format!("Đã lưu {n} địa chỉ"));
-                self.log(LogLevel::Ok, format!("Đã lưu {n} địa chỉ vào {}", path.display()));
-            }
-            Ok(None) => {}
-            Err(e) => {
-                self.log(LogLevel::Error, format!("Không lưu được file: {e}"));
-                self.toast_err("Lưu file thất bại");
-            }
-        }
-    }
-
     pub fn relaunch_admin(&mut self) {
         if self.relaunching {
             return;
@@ -1860,9 +1829,6 @@ impl eframe::App for App {
         }
         if self.proxy.is_some() {
             self.ctx.request_repaint_after(Duration::from_millis(500));
-        }
-        if self.tab == Tab::Logs {
-            self.unseen_errors = 0;
         }
         self.draw(ui);
         self.flush_settings();

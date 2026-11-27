@@ -94,6 +94,7 @@ pub struct ProxyHandle {
     pub bind: Ipv4Addr,
     pub start_port: u16,
     pub addrs: Vec<Ipv6Addr>,
+    pub auth: Option<Credentials>,
 }
 
 pub fn port_range(start_port: u16, count: usize) -> Result<(u16, u16), String> {
@@ -123,6 +124,7 @@ impl ProxyHandle {
         let bind = cfg.bind;
         let start_port = cfg.start_port;
         let addrs = cfg.addrs.clone();
+        let auth = cfg.auth.clone();
         let run_stats = Arc::clone(&stats);
         let thread = std::thread::Builder::new()
             .name("proxy-main".into())
@@ -137,6 +139,7 @@ impl ProxyHandle {
             bind,
             start_port,
             addrs,
+            auth,
         })
     }
 

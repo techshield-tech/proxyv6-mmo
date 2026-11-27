@@ -45,6 +45,12 @@ flowchart LR
 | **Xuất** | 5 định dạng, phạm vi *Tất cả / Đã chọn / Đã thêm*, sao chép vào clipboard hoặc lưu ra file. |
 | **Giao diện** | Giao diện dark/light, tiếng Việt, nhật ký có thể lọc chỉ lỗi, tự lưu cài đặt và danh sách địa chỉ đã gắn. |
 
+## Ảnh chụp màn hình
+
+<img src="assets/screenshots/generate.png" alt="Tab Tạo địa chỉ" width="900">
+
+<img src="assets/screenshots/proxy.png" alt="Tab Địa chỉ & Proxy" width="900">
+
 ## Yêu cầu
 
 - **Đường truyền có IPv6 global** và nhà mạng/VPS định tuyến cả prefix về máy của bạn. Nếu router chỉ cấp một địa chỉ đơn lẻ thì các địa chỉ sinh thêm sẽ không ra được Internet.
@@ -143,20 +149,8 @@ src/
 │   └── platform/      Thêm/gỡ địa chỉ theo từng hệ điều hành
 ├── proxy/             Proxy HTTP + SOCKS5 trên cùng cổng
 └── ui/                Các tab giao diện
-assets/                Logo và icon
+assets/                Logo, icon và ảnh chụp màn hình
 ```
-
-## Logo
-
-| File | Dùng cho |
-|---|---|
-| `assets/logo.svg` | Logo gốc dạng vector |
-| `assets/logo-small.svg` | Bản rút gọn, dễ nhìn ở cỡ 16–32px |
-| `assets/logo-wordmark-light.svg` / `-dark.svg` | Logo kèm chữ, cho nền sáng/tối |
-| `assets/icon.png`, `assets/logo.png` | Icon cửa sổ (256px), logo 512px |
-| `assets/icon.ico` | Icon file `.exe` trên Windows (16–256px) |
-
-Ý nghĩa: hình lục giác tượng trưng cho số **6** của IPv6. Lõi xanh ở giữa là prefix, 6 nút xung quanh là các proxy tỏa ra từ prefix đó.
 
 ## Lưu ý sử dụng
 
